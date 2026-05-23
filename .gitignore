@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Secrets (never commit)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Model / cache (large, reproducible)
+.cache/
+models/checkpoints/
+*.pt
+*.bin
+*.safetensors
+
+# Optional: vendored vulnerable training apps (do not publish as your code)
+pygoat/
+PyGoat/
+**/pygoat/**
+
+# Scan artifacts
+scripts/scan_secrets_report.txt
