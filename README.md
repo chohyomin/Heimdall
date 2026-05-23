@@ -32,9 +32,9 @@ flowchart LR
 
 ---
 
-## 🛠️ Key Features & Architecture
+## Key Features
 
-### 직무 요구사항 ↔ Heimdall 기능 매핑
+### Capability Mapping (TIP Operations Workflow)
 
 | TIP Ops 핵심 역량 | Heimdall 구현 | 대응 모듈 |
 |-------------------|---------------|-----------|
@@ -104,43 +104,89 @@ $env:PYTHONPATH="src"
 
 ---
 
-## 📂 Directory Structure
+## 🛠️ System Architecture & Implementation
+
+Heimdall은 **분석 오케스트레이션 · 정적 탐지 엔진 · 정형 출력 · 보안 거버넌스** 레이어로 구성됩니다. 각 컴포넌트는 단일 책임을 유지하며, 파이프라인 연동을 위해 명시적인 데이터 모델(`types.py`)을 공유합니다.
+
+### 자동화 탐지 코어 엔진 (`src/heimdall/`)
+
+| 구분 | 내용 |
+|------|------|
+| **역할** | 시나리오 기반 취약점 분석 파이프라인의 실행 제어, 듀얼 엔진 결과 통합, 최종 위험 지수 산출 |
+| **핵심 구현** | `HeimdallCore` — `SemanticEngine`·`StructuralEngine` 호출 및 `hybrid_risk()` 기반 하이브리드 스코어링 |
+| **관련 경로** | `core.py`, `utils/scoring.py` |
+
+### 정적 구조 분석 엔진 (`src/heimdall/engines/structural.py`)
+
+| 구분 | 내용 |
+|------|------|
+| **역할** | AST 기반 Source/Sink 규칙 적용, Interprocedural Taint 추적, Sanitizer·Dead Code 처리 |
+| **핵심 구현** | `StructuralEngine` — `_Summarizer`(함수 요약·Fixpoint), `_Instantiator`(호출 지점 Finding 생성), `_Env`(필드 단위 dict taint), `SinkTemplate` / `FunctionSummary` |
+| **규칙 정의** | `DEFAULT_SINKS`, `TAINT_SOURCES`, `SAFE_FUNCTIONS`, `_sink_name_matches()` |
+
+### 시맨틱 위협 정렬 엔진 (`src/heimdall/engines/semantic.py`)
+
+| 구분 | 내용 |
+|------|------|
+| **역할** | CodeBERT 임베딩을 통한 코드–위협 시나리오(Anchor) 문맥 유사도 산출 |
+| **핵심 구현** | `SemanticEngine` — `DEFAULT_ANCHORS`, `embed_texts()`, `score()` (cosine similarity → bounded risk proxy) |
+
+### 위협 인사이트 정규화 및 리포팅 (`src/heimdall/types.py`, `report.py`)
+
+| 구분 | 내용 |
+|------|------|
+| **역할** | 비정형 분석 산출물을 일관된 스키마로 모델링하고, 운영·연동용 인사이트로 직렬화 |
+| **핵심 구현** | `HybridResult`, `StructuralFinding`, `SemanticResult` (frozen dataclass) — `extra.paths`에 Source→Sink 증거 경로 보존 |
+| **출력 계층** | `format_report()` — Risk Index·Finding·Path 시각화; CLI `--json` — TIP/SIEM 파이프라인 연동용 JSON |
+
+### 분석 실행 인터페이스 (`scripts/`)
+
+| 구분 | 내용 |
+|------|------|
+| **역할** | `target_app` 소스 파일 단위 분석 요청 수신, 엔진 구동, 리포트/JSON 방출 |
+| **핵심 구현** | `scripts/analyze.py` — `argparse` 기반 CLI, `HeimdallCore.analyze_code()` / `analyze_code_dict()` |
+
+### 보안 무결성 및 자격증명 관리 (`/` 루트, `scripts/`, `SECURITY.md`)
+
+| 구분 | 내용 |
+|------|------|
+| **역할** | 저장소 내 민감 정보 하드코딩 방지, 환경변수 기반 비밀 통제, 외부 취약 연습 앱(PyGoat) 커밋 격리 |
+| **핵심 구현** | `.env.example` / `.gitignore` — 비밀값 템플릿·커밋 제외; `scripts/scan_secrets.py` — 정적 패턴 스캔 및 `--exclude` 기반 벤더 경로 제외 |
+
+### 회귀·벤치마크 시나리오 (`examples/`)
+
+| 구분 | 내용 |
+|------|------|
+| **역할** | Sanitizer, field-sensitive taint, interprocedural propagation, DCE 등 엔진 동작을 검증하는 합성 취약 코드 세트 |
+| **대표 시나리오** | `challenge.py`, `final_boss.py`, `grand_final.py`, `ultimate_stress_test.py` |
+
+---
+
+## 📂 Repository Layout
 
 ```
 Heimdall/
-├── src/heimdall/                 # 핵심 패키지
-│   ├── core.py                   # HeimdallCore — 오케스트레이터 (Hybrid 결합)
-│   ├── types.py                  # HybridResult / Finding 스키마 (정형화)
-│   ├── report.py                 # Human-readable 리포트 포맷터
+├── src/heimdall/
+│   ├── core.py
+│   ├── types.py
+│   ├── report.py
 │   ├── engines/
-│   │   ├── structural.py         # ★ AST + Taint + Sink/Source 규칙 엔진
-│   │   └── semantic.py           # ★ CodeBERT Semantic 엔진
+│   │   ├── structural.py
+│   │   └── semantic.py
 │   └── utils/
-│       ├── scoring.py            # hybrid_risk() 점수 결합
+│       ├── scoring.py
 │       └── logging.py
 ├── scripts/
-│   ├── analyze.py                # ★ CLI 진입점 (파일 분석 / JSON 출력)
-│   └── scan_secrets.py           # ★ 하드코딩 비밀 스캔 (공개 전 무결성 검증)
-├── examples/                     # 회귀·데모 시나리오 (합성 취약 코드)
-│   ├── challenge.py
-│   ├── final_boss.py
-│   ├── grand_final.py
-│   └── ultimate_stress_test.py
-├── data/                         # (확장) 코퍼스·벤치마크·로그 아카이브
-├── models/                       # (확장) fine-tuned 체크포인트
-├── .env.example                  # 환경변수 템플릿 (비밀값 없음)
-├── SECURITY.md                   # 시크릿·PyGoat 제외 가이드
+│   ├── analyze.py
+│   └── scan_secrets.py
+├── examples/
+├── data/
+├── models/
+├── .env.example
+├── SECURITY.md
 ├── pyproject.toml
 └── requirements.txt
 ```
-
-### 면접관이 먼저 보면 좋은 파일 (Recommended Reading Order)
-
-1. `src/heimdall/engines/structural.py` — Taint/Sink/Source/DCE 핵심 로직  
-2. `src/heimdall/core.py` — Dual-engine 오케스트레이션  
-3. `src/heimdall/types.py` + `report.py` — 정형 출력·인사이트 포맷  
-4. `scripts/analyze.py` — 실행 진입점  
-5. `examples/grand_final.py` — End-to-end 시나리오 (Sanitizer + Interprocedural + DCE)
 
 ---
 
@@ -190,7 +236,7 @@ PyGoat는 **의도적 취약점**이 포함된 외부 OSS이므로, 본 레포�
 
 ## 🔒 Security & Clean Code
 
-보안 직무 지원자로서 **공개 저장소 무결성**을 전제로 설계했습니다.
+공개 저장소 배포를 전제로 **소스코드 무결성**을 설계·검증할 수 있는 구조를 유지합니다.
 
 | 항목 | 상태 |
 |------|------|
@@ -237,5 +283,5 @@ PyGoat는 **의도적 취약점**이 포함된 외부 OSS이므로, 본 레포�
 
 ## Author
 
-**Threat Intelligence / Security Engineering Portfolio**  
-문의 및 피드백은 Issues 또는 Pull Request로 환영합니다.
+**Threat Intelligence · Security Engineering**  
+문의 및 기여는 Issues 또는 Pull Request로 환영합니다.
